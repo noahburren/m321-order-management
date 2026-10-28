@@ -1,0 +1,164 @@
+name: m321-order-management
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD}
+      PROCESSING_DB_PASSWORD: ${PROCESSING_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init-services.sh:/docker-entrypoint-initdb.d/001-init-services.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    restart: unless-stopped
+    ports: ["5672:5672", "15672:15672"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    restart: unless-stopped
+    command: start-dev --import-realm
+    ports: ["8080:8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./m321-order-service/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"]
+
+  order-service:
+    build:
+      context: ./m321-order-service
+    restart: unless-stopped
+    ports: ["8081:8081"]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_MANAGEMENT_URL: http://rabbitmq:15672
+      KEYCLOAK_ISSUER_URI: http://localhost:8080/realms/m321
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/m321/protocol/openid-connect/certs
+      ORDER_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?currentSchema=order_service
+      ORDER_DB_USERNAME: order_service
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD}
+      OTEL_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      STRUCTURED_LOG_FORMAT: logstash
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    stop_grace_period: 30s
+
+  processing:
+    build:
+      context: ./m321-processing-service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      PROCESSING_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?currentSchema=processing_service
+      PROCESSING_DB_USERNAME: processing_service
+      PROCESSING_DB_PASSWORD: ${PROCESSING_DB_PASSWORD}
+      PROCESSING_TIME_MS: ${PROCESSING_TIME_MS:-2500}
+      SERVICE_NAME: processing-service
+      SERVER_PORT: 8082
+      OTEL_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      STRUCTURED_LOG_FORMAT: logstash
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8082/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    stop_grace_period: 40s
+
+  order-ui:
+    build:
+      context: ./m321-order-ui
+    restart: unless-stopped
+    ports: ["5173:80"]
+    depends_on:
+      order-service:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    ports: ["9090:9090"]
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      order-service:
+        condition: service_healthy
+      processing:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  keycloak-data:
+  prometheus-data:

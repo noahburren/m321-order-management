@@ -1,0 +1,22 @@
+name: Integration Deployment CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: noahburren/m321-order-service
+          path: m321-order-service
+      - uses: actions/checkout@v4
+        with:
+          repository: LeviFuchs/m321-processing-service
+          path: m321-processing-service
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker compose build order-service processing order-ui

@@ -1,0 +1,13 @@
+.env
+.m2-build-cache/
+.m2-repository/
+*.log
+.idea/
+.vscode/
+.m2-build-cache/
+m321-order-service/
+m321-processing-service/
+m321-hello-world-service/
+OAuth2/
+m321-order-ui/node_modules/
+m321-order-ui/dist/
