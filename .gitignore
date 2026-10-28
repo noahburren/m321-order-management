@@ -4,7 +4,6 @@
 *.log
 .idea/
 .vscode/
-.m2-build-cache/
 m321-order-service/
 m321-processing-service/
 m321-hello-world-service/
