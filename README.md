@@ -78,7 +78,6 @@ Weitere Nachweise:
 - [15-Minuten-Live-Demo](docs/DEMO.md)
 - [Bewertungsnachweise](docs/EVALUATION.md)
 - [Vertrags- und Breaking-Change-Regeln](docs/CONTRACTS.md)
-- [Übergabe der Processing-Änderungen an Levi](docs/LEVI-HANDOFF.md)
 
 ## Verantwortlichkeiten
 
